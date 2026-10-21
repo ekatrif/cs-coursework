@@ -11,11 +11,17 @@ const response: { ok: boolean; json(): Promise<unknown> } = {
   },
 };
 
-const p = asyncValue(Promise.resolve(response), schema)
+const name = asyncValue(Promise.resolve(response), schema)
   .json()
   .data.user.name[0]
   .toLowerCase();
 
-p.then(result => {
+const isStatusOk = asyncValue(Promise.resolve(response), schema).ok;
+
+name.then(result => {
   console.log(result); // "bob"
+}).catch(console.error);
+
+isStatusOk.then(result => {
+  console.log(result); // true
 }).catch(console.error);
