@@ -1,74 +1,85 @@
 # Async Value Chain
 
-Небольшая TypeScript-библиотека для построения типизированных цепочек над
-асинхронными значениями.
+Типизированные цепочки вызовов над значениями, которые появятся позже. Читайте
+свойства и вызывайте методы будущего значения, не прерывая цепочку на каждом
+шаге с помощью `await`.
 
 ```ts
-import { asyncValue } from "./src";
+import { asyncValue } from "async-value-chain";
 
-const user = asyncValue(
-  Promise.resolve({ name: ["Bob", "Smith"] }),
-);
+async function main() {
+  const user = asyncValue(Promise.resolve({ name: ["Bob", "Smith"] }));
+  const firstName = user.name[0].toLowerCase();
 
-const firstName = user.name[0].toLowerCase();
+  console.log(await firstName); // "bob"
+}
 
-firstName.then(result => console.log(result)); // "bob"
+main().catch(console.error);
 ```
 
-Тип каждого следующего шага выводится из исходного значения. Несуществующие
-свойства и неверные аргументы методов отклоняются TypeScript.
+TypeScript выводит тип каждого следующего шага из исходного значения. В примере
+`firstName` имеет тип `AsyncValue<string>`: его можно ожидать через `await` или
+передать обработчик в `.then()`.
 
-Методы массивов берутся из стандартных типов `Array` и `ReadonlyArray`, поэтому
-доступны и методы вроде `sort`, `flatMap` и `findLast`. Результат каждого вызова
-остаётся асинхронной цепочкой. Для обобщённых методов, например `map` и `reduce`,
-сохранён вывод типа результата из аргументов.
+## Установка
 
-## Дополнительная схема типов
+```sh
+npm install async-value-chain
+```
 
-Если внешний API не сообщает точный тип результата, его можно дополнить
-схемой:
+Требуется Node.js 18 или новее. Пакет имеет формат CommonJS, содержит
+декларации TypeScript и не имеет runtime-зависимостей. В CommonJS используйте:
+
+```js
+const { asyncValue } = require("async-value-chain");
+```
+
+## Основной API
 
 ```ts
-const scheme = {
-  json: () => ({
-    data: {
-      user: {
-        name: [String],
-      },
-    },
-  }),
-};
-
-const request = asyncValue(fetch("/my-resource"), scheme);
-
-const name = request
-  .json()
-  .data.user.name[0]
-  .toLowerCase();
-
-name.then(result => console.log(result)); // result: string
+asyncValue(source)
+asyncValue(source, schema)
 ```
 
-Поддерживаемые дескрипторы примитивов: `String`, `Number`, `Boolean`, `BigInt`
-и `Symbol`. Массив с одним дескриптором описывает массив значений, функция —
-метод и его возвращаемую структуру, объект — свойства результата.
+`source` может быть обычным значением или `PromiseLike`. Функция возвращает
+`AsyncValue<T>`, где `T` — тип значения после ожидания `source`. Необязательная
+`schema` уточняет типы, когда исходная сигнатура не описывает результат
+достаточно точно.
 
-Схема является только дополнительным источником статических типов. Она не
-изменяет выполнение, не преобразует и не валидирует полученные данные. Для
-недоверенного JSON следует отдельно использовать runtime-валидатор.
-
-Свойства исходного типа, не перечисленные в схеме, сохраняются:
+Чтение свойства и вызов метода добавляют действия в цепочку. Они выполняются,
+когда вы ожидаете результат через `await` или обращаетесь к `.then()`, `.catch()`
+либо `.finally()`. Если `source` уже является промисом, его собственная работа
+могла начаться раньше.
 
 ```ts
-const request = asyncValue(fetch("/my-resource"), scheme);
+async function main() {
+  const names = asyncValue(Promise.resolve(["Bob", "Alice"]));
 
-await request.ok;     // свойство Response
-await request.json(); // результат уточнён схемой
+  const upper = names.map(name => name.toUpperCase());
+  const first = names[0].toLowerCase();
+
+  console.log(await upper); // ["BOB", "ALICE"]
+  console.log(await first); // "bob"
+}
+
+main().catch(console.error);
 ```
 
-## Пользовательские типы
+У одного и того же объекта цепочки результат выполнения сохраняется: повторное
+`await upper` не вызовет `map` ещё раз. Отдельно построенные цепочки выполняются
+отдельно. Это важно для методов с побочными эффектами, например `push`.
 
-Пользовательские классы работают без регистрации адаптера:
+Ошибки исходного промиса, геттеров и вызовов методов приводят к отклонению
+результирующего промиса. Обрабатывайте их обычным `try/catch` с `await` или
+через `.catch()`.
+
+## Вывод типов
+
+Свойства объектов и пользовательских классов, методы примитивов, индексы и
+стандартные методы массивов доступны из исходного типа. Аргументы методов
+проверяются TypeScript; результат каждого шага остаётся асинхронной цепочкой.
+Для обобщённых методов массива, включая `map`, `filter`, `flatMap` и `reduce`,
+тип результата выводится из переданных аргументов.
 
 ```ts
 class Money {
@@ -82,29 +93,82 @@ class Money {
   }
 }
 
-const money = asyncValue(Promise.resolve(new Money(10, "EUR")));
+async function main() {
+  const money = asyncValue(Promise.resolve(new Money(10, "EUR")));
 
-await money.amount;  // number
-await money.format(); // string
+  console.log(await money.amount);   // 10
+  console.log(await money.format()); // "10 EUR"
+}
+
+main().catch(console.error);
 ```
 
-Runtime использует нативные свойства и методы значения, а TypeScript выводит
-их из типа класса. Вызовы сохраняют правильный `this`.
+При вызове метода сохраняется его `this`, поэтому методы экземпляров работают
+без дополнительной привязки. Для собственных классов не нужна регистрация
+адаптеров.
 
-## Команды
+## Схема для уточнения типов
+
+Если метод возвращает `unknown`, можно описать его ожидаемый результат схемой:
+
+```ts
+import { asyncValue } from "async-value-chain";
+
+const response: { ok: boolean; json(): Promise<unknown> } = {
+  ok: true,
+  async json() {
+    return { data: { user: { name: ["Bob", "Smith"] } } };
+  },
+};
+
+const schema = {
+  json: () => ({ data: { user: { name: [String] } } }),
+};
+
+async function main() {
+  const request = asyncValue(Promise.resolve(response), schema);
+
+  console.log(await request.json().data.user.name[0].toLowerCase()); // "bob"
+  console.log(await request.ok); // true
+}
+
+main().catch(console.error);
+```
+
+В схеме `String`, `Number`, `Boolean`, `BigInt` и `Symbol` описывают примитивы.
+Массив с одним дескриптором, например `[String]`, описывает массив строк.
+Функция описывает метод и структуру его результата, а объект — свойства.
+Свойства исходного типа, которых нет в схеме, сохраняются: поэтому `request.ok`
+остаётся доступным.
+
+Схема используется **только для типов**. Она не меняет данные, не вызывает
+описанные в ней функции и не проверяет ответ во время выполнения. Проверяйте
+недоверенные данные отдельно перед использованием.
+
+## Особенности и ограничения
+
+- `then`, `catch` и `finally` служат для получения результата цепочки. Доступ к
+  одноимённым свойствам исходного значения через этот API невозможен.
+- Результат поддерживает `await` и методы промиса, но является прокси, поэтому
+  проверка `instanceof Promise` не является способом его распознать.
+- Типы TypeScript помогают при разработке, но не защищают от неверной схемы или
+  данных, которые изменились во время выполнения.
+
+## Разработка
 
 ```sh
-npm test
 npm run typecheck
+npm test
 npm run build
 ```
 
-Проект не требует runtime-зависимостей.
+`npm test` собирает проект, проверяет типы и запускает runtime-тесты.
 
-## Примеры
+## Примеры из репозитория:
 
-- `examples/async-method-chain.js` — цепочка через асинхронное получение сервиса
-  и его асинхронный метод. Запуск: `npm run build && node dist/examples/async-method-chain.js`.
-- `examples/typed-schema.ts` — схема уточняет результат `json(): Promise<unknown>`
-  и позволяет TypeScript проверить продолжение цепочки. Запуск:
+- `examples/async-method-chain.js` — асинхронный метод сервиса:
+  `npm run build && node dist/examples/async-method-chain.js`.
+- `examples/typed-schema.ts` — уточнение результата `json()`:
   `npm run build && node dist/examples/typed-schema.js`.
+
+Лицензия: MIT.
