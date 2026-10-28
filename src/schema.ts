@@ -43,8 +43,8 @@ type MergeObject<T, S extends object> =
     >;
   };
 
-// Applies a type-only schema on top of an inferred runtime type.
-// Keys not mentioned by the schema remain available from the inferred type.
+// Накладывает схему (содержащую только определения типов) поверх выведенного типа времени выполнения.
+// Ключи, не указанные в схеме, остаются доступными в составе выведенного типа.
 
 export type ApplySchema<T, S> =
   S extends SchemaPrimitive
